@@ -337,8 +337,41 @@
       updatePreview();
       updateButtons();
       
+      // Add this debounce function at the top with other state management
+      function debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+          const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+          };
+          clearTimeout(timeout);
+          timeout = setTimeout(later, wait);
+        };
+      }
+
+      // Helper functions for text processing
+      function normalizeText(text) {
+        return text
+          .replace(/\r\n/g, '\n') // Normalize line endings
+          .replace(/\n{3,}/g, '\n\n') // Max 2 consecutive newlines
+          .replace(/[ \t]+$/gm, '') // Trim line endings
+          .trim();
+      }
+
+      function escapeHtml(text) {
+        const escapeMap = {
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#039;'
+        };
+        return text.replace(/[&<>"']/g, char => escapeMap[char]);
+      }
+
       // Event listeners
-      markdownInput.addEventListener('input', function() {
+      markdownInput.addEventListener('input', debounce(function() {
         state.currentText = markdownInput.value;
         if (state.mode === 'preview') {
           updatePreview();
@@ -346,7 +379,7 @@
           updateDiff();
         }
         updateButtons();
-      });
+      }, 250)); // 250ms debounce
       
       saveButton.addEventListener('click', saveVersion);
       clearButton.addEventListener('click', clearEditor);
@@ -413,38 +446,47 @@
         }
       }
       
+      // Replace the old updateDiff function with this optimized version
       function updateDiff() {
         if (state.selectedVersionIndex === -1 || state.versions.length === 0) {
           preview.innerHTML = '<p>No version selected for comparison</p>';
           return;
         }
-        
+
         const selectedVersion = state.versions[state.selectedVersionIndex];
-        const oldText = selectedVersion.content;
-        const newText = state.currentText;
-        
+        const oldText = normalizeText(selectedVersion.content);
+        const newText = normalizeText(state.currentText);
+
+        // Skip diff for very large texts
+        if (oldText.length + newText.length > 1000000) {
+          preview.innerHTML = `
+            <div style="padding: 1rem; background-color: var(--removed); color: black;">
+              Text too large for diff view (${Math.round((oldText.length + newText.length) / 1024)}KB)
+            </div>`;
+          return;
+        }
+
         try {
-          // Generate diff - Use Diff instead of JsDiff
-          const diffResult = Diff.diffLines(oldText, newText);
-          
-          // Display diff
-          let diffHtml = '';
-          diffResult.forEach(part => {
-            const cssClass = part.added ? 'added' : part.removed ? 'removed' : '';
-            const prefix = part.added ? '+ ' : part.removed ? '- ' : '  ';
-            
-            const lines = part.value.split('\n')
-              .filter(line => line.length > 0)
-              .map(line => `<span class="diff-line ${cssClass}">${prefix}${escapeHtml(line)}</span>`)
-              .join('');
-              
-            diffHtml += lines;
+          const diffResult = Diff.diffLines(oldText, newText, {
+            ignoreWhitespace: false,
+            newlineIsToken: true
           });
-          
-          preview.innerHTML = diffHtml || '<p>No differences found</p>';
+
+          const diffHtml = diffResult
+            .map(part => {
+              const cssClass = part.added ? 'added' : part.removed ? 'removed' : '';
+              const content = escapeHtml(part.value);
+              return content.trim() ? `<span class="${cssClass}">${content}</span>` : '';
+            })
+            .join('');
+
+          preview.innerHTML = diffHtml ? 
+            `<pre style="white-space: pre-wrap; margin: 0;">${diffHtml}</pre>` : 
+            '<p>No differences found</p>';
+
         } catch (error) {
-          preview.innerHTML = `<p style="color: var(--danger)">Error generating diff: ${error.message}</p>`;
           console.error('Diff error:', error);
+          preview.innerHTML = `<p style="color: var(--danger)">Error generating diff: ${error.message}</p>`;
         }
       }
       
@@ -621,6 +663,14 @@
       function updateButtons() {
         saveButton.disabled = !state.currentText.trim();
         diffButton.disabled = state.versions.length === 0;
+        
+        if (state.mode === 'diff') {
+          previewButton.classList.remove('active');
+          diffButton.classList.add('active');
+        } else {
+          previewButton.classList.add('active');
+          diffButton.classList.remove('active');
+        }
       }
       
       function generateId() {
@@ -630,7 +680,7 @@
       function escapeHtml(unsafe) {
         return unsafe
           .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
+          .replace(/<//g, "&lt;")
           .replace(/>/g, "&gt;")
           .replace(/"/g, "&quot;")
           .replace(/'/g, "&#039;");

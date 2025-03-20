@@ -217,6 +217,22 @@
       justify-content: space-between;
       align-items: center;
     }
+
+    .version-info {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .version-title {
+      font-weight: bold;
+      color: var(--text-primary);
+    }
+
+    .version-date {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+    }
     
     .version-item .version-date {
       font-size: 0.8rem;
@@ -446,6 +462,43 @@
         }
       }
       
+      // Add new helper function for chunked diffing
+      function chunkDiff(oldText, newText, callback) {
+        const chunkSize = 5000;
+        const chunks = [];
+        let processed = 0;
+        const total = Math.max(oldText.length, newText.length);
+
+        function processChunk() {
+          const start = processed;
+          const end = Math.min(processed + chunkSize, total);
+          
+          const oldChunk = oldText.slice(start, end);
+          const newChunk = newText.slice(start, end);
+          
+          const diffResult = Diff.diffWords(oldChunk, newChunk, {
+            ignoreCase: false
+          });
+          
+          chunks.push(...diffResult);
+          processed = end;
+          
+          // Report progress
+          callback({
+            done: processed >= total,
+            progress: Math.round((processed / total) * 100),
+            chunks: chunks
+          });
+
+          if (processed < total) {
+            requestAnimationFrame(processChunk);
+          }
+        }
+
+        requestAnimationFrame(processChunk);
+      }
+
+      // Replace updateDiff function
       function updateDiff() {
         if (state.selectedVersionIndex === -1 || state.versions.length === 0) {
           preview.innerHTML = '<p>No version selected for comparison</p>';
@@ -456,61 +509,40 @@
         const oldText = normalizeText(selectedVersion.content);
         const newText = normalizeText(state.currentText);
 
-        if (oldText.length + newText.length > 1000000) {
-          preview.innerHTML = `
-            <div style="padding: 1rem; background-color: var(--removed); color: black;">
-              Text too large for diff view (${Math.round((oldText.length + newText.length) / 1024)}KB)
-            </div>`;
-          return;
-        }
+        // Show processing indicator
+        preview.innerHTML = `
+          <div style="text-align: center; padding: 2rem;">
+            <p>Processing diff...</p>
+            <progress value="0" max="100" style="width: 200px;"></progress>
+          </div>`;
 
-        try {
-          // First, get word-level differences
-          const diffResult = Diff.diffWords(oldText, newText, {
-            ignoreCase: false
-          });
+        const progressBar = preview.querySelector('progress');
 
-          // Transform the diff result into HTML with diff markers
-          const markedText = diffResult
-            .map(part => {
-              const cssClass = part.added ? 'added' : part.removed ? 'removed' : '';
-              // Wrap the content in a span for styling while preserving whitespace
-              return part.value ? `<span class="${cssClass}">${part.value}</span>` : '';
-            })
-            .join('');
+        chunkDiff(oldText, newText, ({ done, progress, chunks }) => {
+          if (progressBar) progressBar.value = progress;
 
-          // Parse the marked-up text as markdown
-          const html = marked.parse(markedText, {
-            headerIds: false,
-            mangle: false
-          });
+          if (done) {
+            const markedText = chunks
+              .map(part => {
+                const cssClass = part.added ? 'added' : part.removed ? 'removed' : '';
+                return part.value ? `<span class="${cssClass}">${escapeHtml(part.value)}</span>` : '';
+              })
+              .join('');
 
-          // Apply diff styling to the parsed markdown
-          const styledHtml = html.replace(
-            /<span class="(added|removed)">(.*?)<\/span>/g,
-            (match, type, content) => {
-              const background = type === 'added' ? 'var(--added)' : 'var(--removed)';
-              return `<span style="background-color: ${background};">${content}</span>`;
-            }
-          );
-
-          preview.innerHTML = styledHtml || '<p>No differences found</p>';
-          
-          // Add syntax highlighting for code blocks if needed
-          const codeBlocks = preview.querySelectorAll('pre code');
-          codeBlocks.forEach(block => {
-            // Preserve diff highlighting inside code blocks
-            const content = block.innerHTML;
-            block.innerHTML = content.replace(
-              /<span style="background-color: (.*?)">(.*?)<\/span>/g,
-              '<span style="background-color: $1; display: inline;">$2</span>'
-            );
-          });
-
-        } catch (error) {
-          console.error('Diff error:', error);
-          preview.innerHTML = `<p style="color: var(--danger)">Error generating diff: ${error.message}</p>`;
-        }
+            // Render the final result
+            requestAnimationFrame(() => {
+              try {
+                const html = marked.parse(markedText, {
+                  headerIds: false,
+                  mangle: false
+                });
+                preview.innerHTML = html || '<p>No differences found</p>';
+              } catch (error) {
+                preview.innerHTML = `<p style="color: var(--danger)">Error rendering diff: ${error.message}</p>`;
+              }
+            });
+          }
+        });
       }
       
       function saveVersion() {
@@ -518,25 +550,28 @@
           alert('Cannot save empty content');
           return;
         }
+
+        const title = prompt('Enter a title for this version:', 
+          `Version ${state.versions.length + 1}`);
         
+        if (title === null) return; // User cancelled
+
         const timestamp = new Date().toISOString();
         const version = {
           id: generateId(),
+          title: title.trim() || `Version ${state.versions.length + 1}`,
           timestamp,
           content: state.currentText,
           displayDate: new Date().toLocaleString()
         };
-        
-        state.versions.unshift(version); // Add to beginning
+
+        state.versions.unshift(version);
         if (state.storageEnabled) {
           saveVersions();
         }
         renderVersionsList();
         updateButtons();
-        
-        // Enable diff button if there are versions
         diffButton.disabled = false;
-        
         showToast('Version saved' + (state.storageEnabled ? '' : ' (not persistent)'));
       }
       
@@ -613,7 +648,8 @@
           }
           
           versionElement.innerHTML = `
-            <div>
+            <div class="version-info">
+              <span class="version-title">${escapeHtml(version.title)}</span>
               <span class="version-date">${version.displayDate}</span>
             </div>
             <div class="version-actions">

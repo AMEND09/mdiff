@@ -29,7 +29,7 @@ A sleek, browser-based tool for writing markdown with version control and visual
 
 ## 🚀 Getting Started
 
-1. Open `https://amend09.github.io/mdiff/` in your browser *OR* download and open index.html
+1. Open [https://amend09.github.io/mdiff/] in your browser *OR* Download and open `index.html`
 2. Start writing markdown in the editor
 3. Save versions with custom titles
 4. Compare changes using the diff view

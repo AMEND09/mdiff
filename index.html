@@ -237,7 +237,7 @@
     
     .version-date {
       font-size: 0.8rem;
-      color: var(--text-secondary);
+      color: var (--text-secondary);
     }
     
     .version-item .version-date {
@@ -292,10 +292,10 @@
       justify-content: flex-end;
       color: var(--text-secondary);
       font-size: 0.8rem;
-      margin-top: 0.5rem;
-      position: sticky;
-      bottom: 1rem;
-      z-index: 10;
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 100;
       pointer-events: none;
     }
     
@@ -307,57 +307,18 @@
       backdrop-filter: blur(2px);
       pointer-events: auto;
       border: 1px solid var(--accent);
-      transition: opacity 0.3s;
-      display: flex;
-      align-items: center;
-      gap: 8px;
+      transition: opacity 0.3s, transform 0.2s;
     }
     
-    .word-counter-toggle {
-      cursor: pointer;
-      font-size: 14px;
-      color: var(--accent);
-    }
-    
-    .counter-menu {
-      position: absolute;
-      bottom: 100%;
-      right: 0;
-      background-color: var(--bg-secondary);
-      border: 1px solid #444;
-      border-radius: 4px;
-      padding: 10px;
-      margin-bottom: 8px;
-      width: 220px;
-      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
-      display: none;
-      z-index: 100;
-    }
-    
-    .counter-menu.visible {
-      display: block;
-    }
-    
-    .counter-menu-item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 8px;
-    }
-    
-    .counter-menu-item:last-child {
-      margin-bottom: 0;
-    }
-    
-    .counter-menu-item label {
-      user-select: none;
-      flex: 1;
+    .word-counter:hover {
+      opacity: 1;
+      transform: translateY(-2px);
     }
     
     @media (max-width: 768px) {
       .stats-container {
-        bottom: 0.5rem;
-        right: 0.5rem;
+        bottom: 10px;
+        right: 10px;
       }
     }
   </style>
@@ -391,6 +352,10 @@
               <div class="counter-menu-item">
                 <input type="checkbox" id="count-citations" checked>
                 <label for="count-citations">Include citations</label>
+              </div>
+              <div class="counter-menu-item">
+                <input type="checkbox" id="count-bibliography" checked>
+                <label for="count-bibliography">Include works cited</label>
               </div>
               <div class="counter-menu-item">
                 <input type="checkbox" id="count-codeblocks" checked>
@@ -443,6 +408,7 @@
       const countHeadings = document.getElementById('count-headings');
       const countCitations = document.getElementById('count-citations');
       const countCodeblocks = document.getElementById('count-codeblocks');
+      const countBibliography = document.getElementById('count-bibliography');
       
       // State management
       const state = {
@@ -454,6 +420,7 @@
         countOptions: {
           includeHeadings: true,
           includeCitations: true,
+          includeBibliography: true,
           includeCodeblocks: true
         }
       };
@@ -510,13 +477,25 @@
           processedText = processedText.replace(/^#{1,6}\s+.+$/gm, '');
         }
         
-        // If we're excluding citations, remove citation patterns
+        // If we're excluding the bibliography section
+        if (!state.countOptions.includeBibliography) {
+          // Find and remove various forms of "works cited", "references", "bibliography" sections
+          const bibSectionRegex = /^(?:#{1,3}\s+(?:Works\s+Cited|References|Bibliography|Works\s+Referenced|Sources|Citations|Bibliography))[^#]*?(?=^#{1,3}|\s*$)/gims;
+          processedText = processedText.replace(bibSectionRegex, '');
+          
+          // Remove any remaining citation-like entries (for bibliography items not in a section)
+          // This pattern matches common academic citation formats:
+          // Author name(s), Title. Publisher, Year. Format.
+          const citationLineRegex = /^[^.]+?(?:[A-Z][a-z]+,\s*(?:and\s+)?)+.+\d{4}[^.]*\.\s*(?:Print|Web|Online|Accessed|Retrieved|PDF|DOI|URL|[A-Za-z]+\s+Collection)\..*$/gm;
+          processedText = processedText.replace(citationLineRegex, '');
+        }
+        
+        // If we're excluding in-text citations, remove citation patterns
         if (!state.countOptions.includeCitations) {
           // Remove common citation patterns like [@Author2020] or (Author, 2020)
           processedText = processedText.replace(/\[@[^\]]+\]/g, '');
           processedText = processedText.replace(/\([^)]+\d{4}[^)]*\)/g, '');
-          // Remove lines that likely belong to Works Cited/Bibliography
-          processedText = processedText.replace(/^[^.]+\(\d{4}\)[^.]*\..*$/gm, '');
+          processedText = processedText.replace(/\([^)]+, pp\.\s*\d+(?:-\d+)?\)/g, '');
         }
         
         // If we're excluding code blocks, remove them
@@ -540,6 +519,7 @@
         // Add indicator if some elements are excluded
         if (!state.countOptions.includeHeadings || 
             !state.countOptions.includeCitations || 
+            !state.countOptions.includeBibliography ||
             !state.countOptions.includeCodeblocks) {
           countInfo += ' (filtered)';
         }
@@ -607,6 +587,12 @@
       
       countCodeblocks.addEventListener('change', function() {
         state.countOptions.includeCodeblocks = this.checked;
+        updateWordCount();
+      });
+
+      // Add the bibliography filter event listener
+      countBibliography.addEventListener('change', function() {
+        state.countOptions.includeBibliography = this.checked;
         updateWordCount();
       });
       

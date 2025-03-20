@@ -350,26 +350,6 @@
         };
       }
 
-      // Helper functions for text processing
-      function normalizeText(text) {
-        return text
-          .replace(/\r\n/g, '\n') // Normalize line endings
-          .replace(/\n{3,}/g, '\n\n') // Max 2 consecutive newlines
-          .replace(/[ \t]+$/gm, '') // Trim line endings
-          .trim();
-      }
-
-      function escapeHtml(text) {
-        const escapeMap = {
-          '&': '&amp;',
-          '<': '&lt;',
-          '>': '&gt;',
-          '"': '&quot;',
-          "'": '&#039;'
-        };
-        return text.replace(/[&<>"']/g, char => escapeMap[char]);
-      }
-
       // Event listeners
       markdownInput.addEventListener('input', debounce(function() {
         state.currentText = markdownInput.value;
@@ -379,7 +359,7 @@
           updateDiff();
         }
         updateButtons();
-      }, 250)); // 250ms debounce
+      }, 300)); // 300ms debounce
       
       saveButton.addEventListener('click', saveVersion);
       clearButton.addEventListener('click', clearEditor);
@@ -454,40 +434,69 @@
         }
 
         const selectedVersion = state.versions[state.selectedVersionIndex];
-        const oldText = normalizeText(selectedVersion.content);
-        const newText = normalizeText(state.currentText);
+        const oldText = selectedVersion.content;
+        const newText = state.currentText;
 
-        // Skip diff for very large texts
-        if (oldText.length + newText.length > 1000000) {
+        // Add warning for very long texts
+        if (oldText.length + newText.length > 100000) {
           preview.innerHTML = `
-            <div style="padding: 1rem; background-color: var(--removed); color: black;">
-              Text too large for diff view (${Math.round((oldText.length + newText.length) / 1024)}KB)
+            <div style="padding: 1rem; background-color: var(--removed); color: black; margin-bottom: 1rem;">
+              Warning: Large text comparison may affect performance
             </div>`;
-          return;
         }
 
         try {
-          const diffResult = Diff.diffLines(oldText, newText, {
-            ignoreWhitespace: false,
-            newlineIsToken: true
-          });
+          // Split text into chunks for better performance
+          const chunkSize = 5000;
+          const chunks = [];
+          
+          for (let i = 0; i < newText.length; i += chunkSize) {
+            const oldChunk = oldText.slice(i, i + chunkSize);
+            const newChunk = newText.slice(i, i + chunkSize);
+            
+            const diffResult = Diff.diffWords(oldChunk, newChunk, {
+              ignoreCase: false,
+              ignoreWhitespace: true
+            });
 
-          const diffHtml = diffResult
-            .map(part => {
+            chunks.push(diffResult);
+          }
+
+          // Render only visible chunks
+          const renderChunk = (chunk) => {
+            let html = '';
+            chunk.forEach(part => {
               const cssClass = part.added ? 'added' : part.removed ? 'removed' : '';
-              const content = escapeHtml(part.value);
-              return content.trim() ? `<span class="${cssClass}">${content}</span>` : '';
-            })
-            .join('');
+              if (part.value.trim()) {
+                html += `<span class="${cssClass}">${escapeHtml(part.value)}</span>`;
+              }
+            });
+            return html;
+          };
 
-          preview.innerHTML = diffHtml ? 
-            `<pre style="white-space: pre-wrap; margin: 0;">${diffHtml}</pre>` : 
-            '<p>No differences found</p>';
+          const diffHtml = `
+            <div style="white-space: pre-wrap; line-height: 1.5;">
+              ${chunks.map(renderChunk).join('')}
+            </div>`;
 
+          preview.innerHTML = diffHtml || '<p>No differences found</p>';
         } catch (error) {
-          console.error('Diff error:', error);
           preview.innerHTML = `<p style="color: var(--danger)">Error generating diff: ${error.message}</p>`;
+          console.error('Diff error:', error);
         }
+      }
+      
+      function normalizeText(text) {
+        return text
+          // Replace multiple spaces with a single space
+          .replace(/\s+/g, ' ')
+          // Replace multiple newlines with a single newline
+          .replace(/\n+/g, '\n')
+          // Trim whitespace at the start and end of paragraphs
+          .split('\n')
+          .map(line => line.trim())
+          .join('\n')
+          .trim();
       }
       
       function saveVersion() {
@@ -663,14 +672,6 @@
       function updateButtons() {
         saveButton.disabled = !state.currentText.trim();
         diffButton.disabled = state.versions.length === 0;
-        
-        if (state.mode === 'diff') {
-          previewButton.classList.remove('active');
-          diffButton.classList.add('active');
-        } else {
-          previewButton.classList.add('active');
-          diffButton.classList.remove('active');
-        }
       }
       
       function generateId() {
@@ -680,7 +681,7 @@
       function escapeHtml(unsafe) {
         return unsafe
           .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")  // Fix: Changed /<//g to /</g
+          .replace(/<//g, "&lt;")
           .replace(/>/g, "&gt;")
           .replace(/"/g, "&quot;")
           .replace(/'/g, "&#039;");

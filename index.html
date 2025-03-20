@@ -227,8 +227,14 @@
     .version-title {
       font-weight: bold;
       color: var(--text-primary);
+      cursor: pointer;
     }
-
+    
+    .version-title:hover {
+      text-decoration: underline;
+      color: var(--accent);
+    }
+    
     .version-date {
       font-size: 0.8rem;
       color: var(--text-secondary);
@@ -462,43 +468,99 @@
         }
       }
       
-      // Add new helper function for chunked diffing
+      // Replace the chunkDiff function with a more efficient implementation
       function chunkDiff(oldText, newText, callback) {
-        const chunkSize = 5000;
-        const chunks = [];
-        let processed = 0;
-        const total = Math.max(oldText.length, newText.length);
-
-        function processChunk() {
-          const start = processed;
-          const end = Math.min(processed + chunkSize, total);
+        // Use a worker to prevent UI blocking
+        const workerCode = `
+          self.importScripts('https://cdnjs.cloudflare.com/ajax/libs/jsdiff/4.0.2/diff.min.js');
           
-          const oldChunk = oldText.slice(start, end);
-          const newChunk = newText.slice(start, end);
-          
-          const diffResult = Diff.diffWords(oldChunk, newChunk, {
-            ignoreCase: false
+          self.addEventListener('message', function(e) {
+            const { oldText, newText, chunkSize } = e.data;
+            let chunks = [];
+            let processed = 0;
+            const total = Math.max(oldText.length, newText.length);
+            
+            // Process in chunks to avoid timeouts
+            function processNextChunk() {
+              const start = processed;
+              const end = Math.min(processed + chunkSize, total);
+              
+              // Get text segments for this chunk
+              const oldChunk = oldText.slice(start, end);
+              const newChunk = newText.slice(start, end);
+              
+              try {
+                // Word by word diff for this chunk
+                const diffResult = Diff.diffWords(oldChunk, newChunk, {
+                  ignoreCase: false
+                });
+                
+                // Report progress
+                self.postMessage({
+                  done: false,
+                  progress: Math.round((processed / total) * 100),
+                  chunks: diffResult
+                });
+                
+                chunks = chunks.concat(diffResult);
+                processed = end;
+                
+                if (processed < total) {
+                  // Schedule next chunk with small delay to allow UI updates
+                  setTimeout(processNextChunk, 0);
+                } else {
+                  // Finished all chunks, send final result
+                  self.postMessage({
+                    done: true,
+                    progress: 100,
+                    chunks: chunks
+                  });
+                }
+              } catch (error) {
+                self.postMessage({
+                  error: error.message
+                });
+              }
+            }
+            
+            // Start processing
+            processNextChunk();
           });
-          
-          chunks.push(...diffResult);
-          processed = end;
-          
-          // Report progress
-          callback({
-            done: processed >= total,
-            progress: Math.round((processed / total) * 100),
-            chunks: chunks
-          });
+        `;
 
-          if (processed < total) {
-            requestAnimationFrame(processChunk);
+        // Create blob URL for the worker
+        const blob = new Blob([workerCode], { type: 'application/javascript' });
+        const workerUrl = URL.createObjectURL(blob);
+        
+        // Create and start the worker
+        const worker = new Worker(workerUrl);
+        
+        // Listen for messages from the worker
+        worker.addEventListener('message', function(e) {
+          if (e.data.error) {
+            callback({ error: e.data.error });
+            worker.terminate();
+            URL.revokeObjectURL(workerUrl);
+            return;
           }
-        }
-
-        requestAnimationFrame(processChunk);
+          
+          callback(e.data);
+          
+          if (e.data.done) {
+            worker.terminate();
+            URL.revokeObjectURL(workerUrl);
+          }
+        });
+        
+        // Start the worker with the text
+        worker.postMessage({
+          oldText,
+          newText,
+          chunkSize: 2000 // Smaller chunk size for more frequent updates
+        });
       }
 
-      // Replace updateDiff function
+      // Update the updateDiff function to handle potential errors
       function updateDiff() {
         if (state.selectedVersionIndex === -1 || state.versions.length === 0) {
           preview.innerHTML = '<p>No version selected for comparison</p>';
@@ -514,30 +576,49 @@
           <div style="text-align: center; padding: 2rem;">
             <p>Processing diff...</p>
             <progress value="0" max="100" style="width: 200px;"></progress>
+            <p><small>Processing large files may take a moment</small></p>
           </div>`;
 
         const progressBar = preview.querySelector('progress');
+        let accumulatedChunks = [];
 
-        chunkDiff(oldText, newText, ({ done, progress, chunks }) => {
-          if (progressBar) progressBar.value = progress;
+        chunkDiff(oldText, newText, (result) => {
+          if (result.error) {
+            preview.innerHTML = `<p style="color: var(--danger)">Error generating diff: ${result.error}</p>`;
+            return;
+          }
 
-          if (done) {
-            const markedText = chunks
-              .map(part => {
-                const cssClass = part.added ? 'added' : part.removed ? 'removed' : '';
-                return part.value ? `<span class="${cssClass}">${escapeHtml(part.value)}</span>` : '';
-              })
-              .join('');
+          if (progressBar) progressBar.value = result.progress;
+          
+          if (result.chunks && !result.done) {
+            // Accumulate chunks
+            accumulatedChunks = accumulatedChunks.concat(result.chunks);
+          }
 
-            // Render the final result
+          if (result.done) {
+            // Use all chunks for the final result
+            const chunks = result.chunks || accumulatedChunks;
+            
+            // Process in animation frame to avoid UI blocking
             requestAnimationFrame(() => {
               try {
+                // Instead of processing all at once, prepare the HTML in chunks
+                let markedText = '';
+                for (let i = 0; i < chunks.length; i++) {
+                  const part = chunks[i];
+                  const cssClass = part.added ? 'added' : part.removed ? 'removed' : '';
+                  markedText += part.value ? `<span class="${cssClass}">${escapeHtml(part.value)}</span>` : '';
+                }
+
+                // Process markdown after generating all the HTML
                 const html = marked.parse(markedText, {
                   headerIds: false,
                   mangle: false
                 });
+                
                 preview.innerHTML = html || '<p>No differences found</p>';
               } catch (error) {
+                console.error('Rendering error:', error);
                 preview.innerHTML = `<p style="color: var(--danger)">Error rendering diff: ${error.message}</p>`;
               }
             });
@@ -649,7 +730,7 @@
           
           versionElement.innerHTML = `
             <div class="version-info">
-              <span class="version-title">${escapeHtml(version.title)}</span>
+              <span class="version-title" title="Click to rename">${escapeHtml(version.title)}</span>
               <span class="version-date">${version.displayDate}</span>
             </div>
             <div class="version-actions">
@@ -658,6 +739,11 @@
               <button class="danger">Delete</button>
             </div>
           `;
+          
+          // Add click handler for title to enable renaming
+          versionElement.querySelector('.version-title').addEventListener('click', () => {
+            renameVersion(index);
+          });
           
           // Add event listeners
           versionElement.querySelector('.load-btn').addEventListener('click', () => {
@@ -674,6 +760,21 @@
           
           versionsList.appendChild(versionElement);
         });
+      }
+      
+      // Add new function to rename versions
+      function renameVersion(index) {
+        const version = state.versions[index];
+        const newTitle = prompt('Enter a new title for this version:', version.title);
+        
+        if (newTitle !== null && newTitle.trim() !== '') {
+          version.title = newTitle.trim();
+          if (state.storageEnabled) {
+            saveVersions();
+          }
+          renderVersionsList();
+          showToast('Version renamed');
+        }
       }
       
       function loadVersion(index) {

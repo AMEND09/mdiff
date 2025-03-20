@@ -289,16 +289,76 @@
 
     .stats-container {
       display: flex;
-      justify-content: space-between;
+      justify-content: flex-end;
       color: var(--text-secondary);
       font-size: 0.8rem;
       margin-top: 0.5rem;
+      position: sticky;
+      bottom: 1rem;
+      z-index: 10;
+      pointer-events: none;
     }
     
     .word-counter {
-      background-color: rgba(255, 255, 255, 0.1);
-      padding: 2px 8px;
-      border-radius: 10px;
+      background-color: rgba(40, 40, 40, 0.8);
+      padding: 4px 10px;
+      border-radius: 20px;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+      backdrop-filter: blur(2px);
+      pointer-events: auto;
+      border: 1px solid var(--accent);
+      transition: opacity 0.3s;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .word-counter-toggle {
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--accent);
+    }
+    
+    .counter-menu {
+      position: absolute;
+      bottom: 100%;
+      right: 0;
+      background-color: var(--bg-secondary);
+      border: 1px solid #444;
+      border-radius: 4px;
+      padding: 10px;
+      margin-bottom: 8px;
+      width: 220px;
+      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
+      display: none;
+      z-index: 100;
+    }
+    
+    .counter-menu.visible {
+      display: block;
+    }
+    
+    .counter-menu-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    
+    .counter-menu-item:last-child {
+      margin-bottom: 0;
+    }
+    
+    .counter-menu-item label {
+      user-select: none;
+      flex: 1;
+    }
+    
+    @media (max-width: 768px) {
+      .stats-container {
+        bottom: 0.5rem;
+        right: 0.5rem;
+      }
     }
   </style>
 </head>
@@ -320,7 +380,24 @@
         <h2>Markdown Editor</h2>
         <textarea id="markdown-input" placeholder="Paste or type your markdown here..."></textarea>
         <div class="stats-container">
-          <div id="word-counter" class="word-counter">0 words</div>
+          <div id="word-counter" class="word-counter">
+            <span id="count-display">0 words</span>
+            <span class="word-counter-toggle" id="counter-toggle">⚙️</span>
+            <div id="counter-menu" class="counter-menu">
+              <div class="counter-menu-item">
+                <input type="checkbox" id="count-headings" checked>
+                <label for="count-headings">Include headings</label>
+              </div>
+              <div class="counter-menu-item">
+                <input type="checkbox" id="count-citations" checked>
+                <label for="count-citations">Include citations</label>
+              </div>
+              <div class="counter-menu-item">
+                <input type="checkbox" id="count-codeblocks" checked>
+                <label for="count-codeblocks">Include code blocks</label>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="button-group">
           <button id="save-button">Save Version</button>
@@ -360,6 +437,12 @@
       const storageStatus = document.getElementById('storage-status');
       const toast = document.getElementById('toast');
       const wordCounter = document.getElementById('word-counter');
+      const countDisplay = document.getElementById('count-display');
+      const counterToggle = document.getElementById('counter-toggle');
+      const counterMenu = document.getElementById('counter-menu');
+      const countHeadings = document.getElementById('count-headings');
+      const countCitations = document.getElementById('count-citations');
+      const countCodeblocks = document.getElementById('count-codeblocks');
       
       // State management
       const state = {
@@ -367,7 +450,12 @@
         currentText: '',
         selectedVersionIndex: -1,
         mode: 'preview', // 'preview' or 'diff'
-        storageEnabled: true
+        storageEnabled: true,
+        countOptions: {
+          includeHeadings: true,
+          includeCitations: true,
+          includeCodeblocks: true
+        }
       };
       
       // Initialize
@@ -414,14 +502,52 @@
       // Add word counting function
       function countWords(text) {
         if (!text || !text.trim()) return 0;
+        
+        let processedText = text;
+        
+        // If we're excluding headings, remove Markdown headings
+        if (!state.countOptions.includeHeadings) {
+          processedText = processedText.replace(/^#{1,6}\s+.+$/gm, '');
+        }
+        
+        // If we're excluding citations, remove citation patterns
+        if (!state.countOptions.includeCitations) {
+          // Remove common citation patterns like [@Author2020] or (Author, 2020)
+          processedText = processedText.replace(/\[@[^\]]+\]/g, '');
+          processedText = processedText.replace(/\([^)]+\d{4}[^)]*\)/g, '');
+          // Remove lines that likely belong to Works Cited/Bibliography
+          processedText = processedText.replace(/^[^.]+\(\d{4}\)[^.]*\..*$/gm, '');
+        }
+        
+        // If we're excluding code blocks, remove them
+        if (!state.countOptions.includeCodeblocks) {
+          processedText = processedText.replace(/```[\s\S]*?```/g, '');
+          processedText = processedText.replace(/`[^`]+`/g, '');
+        }
+        
         // Split by whitespace and filter out empty strings
-        return text.trim().split(/\s+/).filter(word => word.length > 0).length;
+        return processedText.trim().split(/\s+/).filter(word => word.length > 0).length;
       }
       
       // Update word counter display
       function updateWordCount() {
         const count = countWords(state.currentText);
-        wordCounter.textContent = `${count} word${count !== 1 ? 's' : ''}`;
+        const charCount = state.currentText.length;
+        
+        // Create a more descriptive count based on what's included
+        let countInfo = `${count} word${count !== 1 ? 's' : ''} | ${charCount} char${charCount !== 1 ? 's' : ''}`;
+        
+        // Add indicator if some elements are excluded
+        if (!state.countOptions.includeHeadings || 
+            !state.countOptions.includeCitations || 
+            !state.countOptions.includeCodeblocks) {
+          countInfo += ' (filtered)';
+        }
+        
+        countDisplay.textContent = countInfo;
+        
+        // Show/hide counter based on text presence
+        wordCounter.style.opacity = state.currentText.length > 0 ? '0.8' : '0.5';
       }
 
       // Event listeners
@@ -451,6 +577,37 @@
         } else {
           showToast('Local storage disabled. Your versions will not persist.');
         }
+      });
+      
+      // Add counter menu toggle
+      counterToggle.addEventListener('click', function(e) {
+        e.stopPropagation();
+        counterMenu.classList.toggle('visible');
+      });
+      
+      // Close menu when clicking outside
+      document.addEventListener('click', function() {
+        counterMenu.classList.remove('visible');
+      });
+      
+      counterMenu.addEventListener('click', function(e) {
+        e.stopPropagation();
+      });
+      
+      // Count option event listeners
+      countHeadings.addEventListener('change', function() {
+        state.countOptions.includeHeadings = this.checked;
+        updateWordCount();
+      });
+      
+      countCitations.addEventListener('change', function() {
+        state.countOptions.includeCitations = this.checked;
+        updateWordCount();
+      });
+      
+      countCodeblocks.addEventListener('change', function() {
+        state.countOptions.includeCodeblocks = this.checked;
+        updateWordCount();
       });
       
       // Functions

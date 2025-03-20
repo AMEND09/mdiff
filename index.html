@@ -286,6 +286,20 @@
     .toast.visible {
       opacity: 1;
     }
+
+    .stats-container {
+      display: flex;
+      justify-content: space-between;
+      color: var(--text-secondary);
+      font-size: 0.8rem;
+      margin-top: 0.5rem;
+    }
+    
+    .word-counter {
+      background-color: rgba(255, 255, 255, 0.1);
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
   </style>
 </head>
 <body>
@@ -305,6 +319,9 @@
       <div class="panel">
         <h2>Markdown Editor</h2>
         <textarea id="markdown-input" placeholder="Paste or type your markdown here..."></textarea>
+        <div class="stats-container">
+          <div id="word-counter" class="word-counter">0 words</div>
+        </div>
         <div class="button-group">
           <button id="save-button">Save Version</button>
           <button id="clear-button">Clear</button>
@@ -342,6 +359,7 @@
       const storageToggle = document.getElementById('storage-toggle');
       const storageStatus = document.getElementById('storage-status');
       const toast = document.getElementById('toast');
+      const wordCounter = document.getElementById('word-counter');
       
       // State management
       const state = {
@@ -358,6 +376,7 @@
       loadVersions();
       updatePreview();
       updateButtons();
+      updateWordCount(); // Initial count
       
       // Add this debounce function at the top with other state management
       function debounce(func, wait) {
@@ -392,9 +411,23 @@
         return text.replace(/[&<>"']/g, char => escapeMap[char]);
       }
 
+      // Add word counting function
+      function countWords(text) {
+        if (!text || !text.trim()) return 0;
+        // Split by whitespace and filter out empty strings
+        return text.trim().split(/\s+/).filter(word => word.length > 0).length;
+      }
+      
+      // Update word counter display
+      function updateWordCount() {
+        const count = countWords(state.currentText);
+        wordCounter.textContent = `${count} word${count !== 1 ? 's' : ''}`;
+      }
+
       // Event listeners
       markdownInput.addEventListener('input', debounce(function() {
         state.currentText = markdownInput.value;
+        updateWordCount(); // Update word count
         if (state.mode === 'preview') {
           updatePreview();
         } else {
@@ -659,6 +692,7 @@
       function clearEditor() {
         markdownInput.value = '';
         state.currentText = '';
+        updateWordCount(); // Update word count
         updatePreview();
         updateButtons();
       }
@@ -781,6 +815,7 @@
         const version = state.versions[index];
         markdownInput.value = version.content;
         state.currentText = version.content;
+        updateWordCount(); // Update word count
         updatePreview();
         showToast('Version loaded');
       }
